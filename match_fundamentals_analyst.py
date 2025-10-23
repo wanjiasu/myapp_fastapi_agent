@@ -13,7 +13,7 @@ from api_football_tools import get_fixture_basic_info, get_standing_home_info, g
 
 # 模型初始化
 llm = ChatOpenAI(
-    model_name="gpt-4o-mini",
+    model_name="gpt-5-2025-08-07",
     api_key=os.getenv("YUNWU_API_KEY"),
     base_url=os.getenv("YUNWU_API_BASE_URL")
 )
