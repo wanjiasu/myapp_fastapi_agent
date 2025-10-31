@@ -9,9 +9,11 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
-# 明确加载 .env 文件
-DOTENV_PATH = "/Users/kuriball/Documents/MyProjects/agent/bc_agent/.env"
-load_dotenv(dotenv_path=DOTENV_PATH)
+# 加载 .env（优先当前工作目录；若提供 ENV_PATH 则覆盖）
+load_dotenv()
+custom_env = os.environ.get("ENV_PATH")
+if custom_env:
+    load_dotenv(dotenv_path=custom_env, override=True)
 
 DB_CONFIG = {
     "host": os.getenv("postgre_host"),
@@ -28,6 +30,10 @@ st.caption("从 PostgreSQL 读取 fixtures，选择比赛并生成基本面报�
 @st.cache_data(ttl=60)
 def fetch_fixtures() -> pd.DataFrame:
     """从数据库读取指定字段，并对 fixture_date 做 +8h 展示处理。"""
+    # 基本校验，避免 host 缺失导致走本地socket
+    if not DB_CONFIG.get("host"):
+        raise RuntimeError("未配置 postgre_host，请在 .env 或环境变量中设置数据库主机地址")
+
     try:
         conn = psycopg2.connect(**DB_CONFIG)
     except Exception as e:
