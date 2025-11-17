@@ -3,6 +3,7 @@ import os
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage
 from typing import Dict, Annotated, Sequence
 from typing_extensions import TypedDict
 from langchain_core.tools import tool
@@ -12,10 +13,21 @@ load_dotenv()
 from api_football_tools import get_fixture_basic_info, get_standing_home_info, get_standing_away_info, get_fixture_head2head, get_home_last_10, get_away_last_10, get_injuries
 
 # 模型初始化
+# 注意：langchain-openai 1.0.x 使用参数 `model` 而不是 `model_name`
+# 为了兼容不同的后端（特别是自定义 OpenAI 风格服务），从环境变量读取模型名
+def _ensure_v1_base_url(url: str | None) -> str | None:
+    """确保 base_url 以 /v1 结尾，避免非 JSON 响应导致 SDK 解析失败。"""
+    if not url:
+        return url
+    u = url.rstrip("/")
+    if not u.endswith("/v1"):
+        u = f"{u}/v1"
+    return u
+
 llm = ChatOpenAI(
-    model_name="gpt-5-2025-08-07",
+    model=os.getenv("YUNWU_MODEL") or "gpt-4o-mini",
     api_key=os.getenv("YUNWU_API_KEY"),
-    base_url=os.getenv("YUNWU_API_BASE_URL")
+    base_url=_ensure_v1_base_url(os.getenv("YUNWU_API_BASE_URL")),
 )
 
 
@@ -28,7 +40,11 @@ class AgentState(MessagesState):
 # 创建fundamentals analyst 节点函数
 def create_fundamentals_analyst(llm):
     def fundamentals_analyst_node(state):
-        fixture_id = state["fixture_id"]
+        # 保证 fixture_id 是整数，避免后续工具调用出现类型不一致
+        try:
+            fixture_id = int(state["fixture_id"]) if state.get("fixture_id") is not None else None
+        except Exception:
+            fixture_id = state["fixture_id"]
 
         tools = [
             get_fixture_head2head,
@@ -147,10 +163,10 @@ def create_fundamentals_graph():
 graph = create_fundamentals_graph()
 
 # 测试函数
-def test_fundamentals_analyst(fixture_id: int = "1347805"):
+def test_fundamentals_analyst(fixture_id: int = 1347805):
     """测试 fundamentals analyst"""
     initial_state = {
-        "messages": [("human", f"分析比赛id为 {fixture_id} 的基本面数据")],
+        "messages": [HumanMessage(content=f"分析比赛id为 {fixture_id} 的基本面数据")],
         "fixture_id": fixture_id,
         "sender": "user",
         "fundamentals_report": "",
@@ -167,4 +183,4 @@ def test_fundamentals_analyst(fixture_id: int = "1347805"):
 
 if __name__ == "__main__":
     # 运行测试
-    test_fundamentals_analyst(fixture_id="1347805")
+    test_fundamentals_analyst(fixture_id=1347805)

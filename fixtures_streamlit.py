@@ -160,7 +160,7 @@ if generate:
             sys.path.append("/Users/kuriball/Documents/MyProjects/agent/bc_agent")
             from match_fundamentals_analyst import test_fundamentals_analyst
 
-            result = test_fundamentals_analyst(fixture_id=str(fixture_id))
+            result = test_fundamentals_analyst(fixture_id=int(fixture_id))
             report = result.get("fundamentals_repost")
 
             if not report:

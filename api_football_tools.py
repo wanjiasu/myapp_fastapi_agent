@@ -253,8 +253,59 @@ def get_standing_away_info(league_id: int, season: int, away_team_id: int) -> Di
             - away_goals_for (int): 客场进球数
             - away_goals_against (int): 客场失球数
     """
-    # 复用主队的逻辑，只是参数名不同
-    return get_standing_home_info(league_id, season, away_team_id)
+    params = {
+        'league': league_id,
+        'season': season,
+        'team': away_team_id
+    }
+    
+    data = _client._make_request('/standings', params)
+    
+    if not data or 'response' not in data or not data['response']:
+        return {}
+    
+    # 查找指定球队的积分榜信息
+    for league_standing in data['response']:
+        league_info = league_standing['league']
+        
+        for standing_group in league_standing['league']['standings']:
+            for team_standing in standing_group:
+                if team_standing['team']['id'] == away_team_id:
+                    return {
+                        'league_id': league_info['id'],
+                        'league_name': league_info['name'],
+                        'league_country': league_info['country'],
+                        'league_season': league_info['season'],
+                        'team_id': team_standing['team']['id'],
+                        'team_name': team_standing['team']['name'],
+                        'rank': team_standing['rank'],
+                        'points': team_standing['points'],
+                        'goalsDiff': team_standing['goalsDiff'],
+                        'group': team_standing['group'],
+                        'form': team_standing['form'],
+                        'status': team_standing['status'],
+                        'description': team_standing['description'],
+                        'all_played': team_standing['all']['played'],
+                        'all_win': team_standing['all']['win'],
+                        'all_draw': team_standing['all']['draw'],
+                        'all_lose': team_standing['all']['lose'],
+                        'all_goals_for': team_standing['all']['goals']['for'],
+                        'all_goals_against': team_standing['all']['goals']['against'],
+                        'home_played': team_standing['home']['played'],
+                        'home_win': team_standing['home']['win'],
+                        'home_draw': team_standing['home']['draw'],
+                        'home_lose': team_standing['home']['lose'],
+                        'home_goals_for': team_standing['home']['goals']['for'],
+                        'home_goals_against': team_standing['home']['goals']['against'],
+                        'away_played': team_standing['away']['played'],
+                        'away_win': team_standing['away']['win'],
+                        'away_draw': team_standing['away']['draw'],
+                        'away_lose': team_standing['away']['lose'],
+                        'away_goals_for': team_standing['away']['goals']['for'],
+                        'away_goals_against': team_standing['away']['goals']['against'],
+                    }
+    
+    return {}
 
 @tool
 def get_fixture_head2head(home_id: int, away_id: int, last: int = 10) -> List[Dict]:
@@ -393,8 +444,42 @@ def get_away_last_10(away_id: int) -> List[Dict]:
             - league_name (str): 联赛名称
             - season (int): 赛季
     """
-    # 复用主队的逻辑
-    return get_home_last_10(away_id)
+    params = {
+        'team': away_id,
+        'last': 10,
+        'timezone': 'UTC'
+    }
+    
+    data = _client._make_request('/fixtures', params)
+    
+    if not data or 'response' not in data:
+        return []
+    
+    extracted_fixtures = []
+    
+    for fixture in data['response']:
+        try:
+            fixture_info = {
+                'fixture_id': fixture['fixture']['id'],
+                'fixture_date': fixture['fixture']['date'],
+                'status': fixture['fixture']['status']['short'],
+                'home_team_id': fixture['teams']['home']['id'],
+                'home_team_name': fixture['teams']['home']['name'],
+                'away_team_id': fixture['teams']['away']['id'],
+                'away_team_name': fixture['teams']['away']['name'],
+                'home_team_winner': fixture['teams']['home']['winner'],
+                'away_team_winner': fixture['teams']['away']['winner'],
+                'goals_home': fixture['goals']['home'],
+                'goals_away': fixture['goals']['away'],
+                'league_id': fixture['league']['id'],
+                'league_name': fixture['league']['name'],
+                'season': fixture['league']['season']
+            }
+            extracted_fixtures.append(fixture_info)
+        except KeyError:
+            continue
+    
+    return extracted_fixtures
 
 @tool
 def get_injuries(fixture_id: int) -> List[Dict]:
