@@ -27,6 +27,70 @@ st.set_page_config(page_title="Fixtures Dashboard", page_icon="⚽", layout="wid
 st.title("⚽ 比赛选择与报告生成")
 st.caption("从 PostgreSQL 读取 fixtures，选择比赛并生成基本面报告")
 
+# 简易账户登录（固定账户：admin / 密码：kuriball）
+ADMIN_USER = "admin"
+ADMIN_PASS = "kuriball"
+
+if "authed" not in st.session_state:
+    st.session_state.authed = False
+
+if not st.session_state.authed:
+    st.subheader("登录")
+    with st.form("login_form"):
+        username = st.text_input("账户", value="")
+        password = st.text_input("密码", value="", type="password")
+        submitted = st.form_submit_button("登录")
+
+    if submitted:
+        if username == ADMIN_USER and password == ADMIN_PASS:
+            st.session_state.authed = True
+            st.success("登录成功")
+            st.rerun()
+        else:
+            st.error("账户或密码错误")
+
+    # 未登录直接停止，避免加载数据与生成报告
+    st.stop()
+else:
+    st.sidebar.success("已登录：admin")
+    if st.sidebar.button("退出登录"):
+        st.session_state.authed = False
+        st.rerun()
+
+    # 赛程刷新入口（侧边栏）
+    import datetime as _dt
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("赛程刷新")
+    refresh_date = st.sidebar.date_input("刷新日期", value=_dt.date.today())
+    refresh_tz = st.sidebar.text_input("时区", value="UTC", help="示例: Asia/Singapore, Europe/London")
+    if st.sidebar.button("刷新赛程", type="primary"):
+        if not os.getenv("API_FOOTBALL_KEY"):
+            st.sidebar.error("未配置 API_FOOTBALL_KEY，请在环境变量或 .env 中设置")
+        else:
+            with st.spinner("正在从 API 获取并保存赛程..."):
+                try:
+                    # 确保可以导入同目录模块
+                    try:
+                        from fixture_data_saver import DataSaver
+                    except Exception:
+                        sys.path.append("/Users/kuriball/Documents/MyProjects/agent/bc_agent")
+                        from fixture_data_saver import DataSaver
+
+                    ds = DataSaver(timezone=refresh_tz)
+                    ok = ds.get_and_save_fixtures_by_date(refresh_date.strftime("%Y-%m-%d"))
+                    if ok:
+                        # 清理缓存以便重新加载最新数据
+                        try:
+                            fetch_fixtures.clear()
+                        except Exception:
+                            pass
+                        st.sidebar.success("赛程刷新完成！")
+                        st.rerun()
+                    else:
+                        st.sidebar.error("赛程刷新失败，请检查 API 或数据库配置")
+                except Exception as e:
+                    st.sidebar.error(f"赛程刷新异常: {e}")
+
 @st.cache_data(ttl=60)
 def fetch_fixtures() -> pd.DataFrame:
     """从数据库读取指定字段，并对 fixture_date 做 +8h 展示处理。"""
@@ -107,7 +171,7 @@ def fetch_fixtures() -> pd.DataFrame:
 
     return df
 
-# 数据加载与展示
+# 数据加载与展示（仅登录后执行）
 try:
     df = fetch_fixtures()
 except Exception as e:
