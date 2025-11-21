@@ -25,7 +25,7 @@ def _ensure_v1_base_url(url: str | None) -> str | None:
     return u
 
 llm = ChatOpenAI(
-    model=os.getenv("YUNWU_MODEL") or "gpt-4o-mini",
+    model=os.getenv("YUNWU_MODEL") or "gpt-5",
     api_key=os.getenv("YUNWU_API_KEY"),
     base_url=_ensure_v1_base_url(os.getenv("YUNWU_API_BASE_URL")),
 )
