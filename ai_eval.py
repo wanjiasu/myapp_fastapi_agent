@@ -55,8 +55,32 @@ def get_db_conn():
         dbname=os.getenv("postgre_db"),
         user=os.getenv("postgre_user"),
         password=os.getenv("postgre_password"),
+        connect_timeout=int(os.getenv("POSTGRE_CONNECT_TIMEOUT", "10")),
+        application_name="ai_eval",
+        keepalives=1,
+        keepalives_idle=int(os.getenv("POSTGRE_KEEPALIVES_IDLE", "30")),
+        keepalives_interval=int(os.getenv("POSTGRE_KEEPALIVES_INTERVAL", "10")),
+        keepalives_count=int(os.getenv("POSTGRE_KEEPALIVES_COUNT", "5")),
     )
+    _configure_session(conn)
     return conn
+
+
+def _configure_session(conn) -> None:
+    """配置连接会话级参数以减少长时间阻塞与空闲超时。"""
+    try:
+        with conn.cursor() as cur:
+            # 限制单条语句最长执行时间 30s；避免事务长时间空闲 30s
+            cur.execute("SET statement_timeout TO 30000;")
+            cur.execute("SET idle_in_transaction_session_timeout TO 30000;")
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        # 非关键配置失败不影响主流程
+        logger.debug("Session config skipped due to error", exc_info=True)
 
 
 def parse_league_ids() -> List[int]:
@@ -83,11 +107,14 @@ def ensure_ai_eval_table(conn) -> None:
                 if_bet INTEGER NOT NULL,
                 predict_winner INTEGER NOT NULL,
                 confidence DOUBLE PRECISION NOT NULL,
+                key_tag_evidence TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() AT TIME ZONE 'UTC'),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() AT TIME ZONE 'UTC')
             );
             """
         )
+        # 保障旧表结构也具备该列
+        cur.execute("ALTER TABLE ai_eval ADD COLUMN IF NOT EXISTS key_tag_evidence TEXT;")
     conn.commit()
     logger.info("Ensured ai_eval table exists")
 
@@ -155,92 +182,109 @@ def generate_markdown_report(fixture_id: int) -> str:
 
 def get_llm() -> ChatOpenAI:
     return ChatOpenAI(
-        model=os.getenv("YUNWU_MODEL") or "gpt-5",
+        model=os.getenv("YUNWU_MODEL") or "gpt-4o",
         api_key=os.getenv("YUNWU_API_KEY"),
         base_url=_ensure_v1_base_url(os.getenv("YUNWU_API_BASE_URL")),
     )
 
 
 def summarize_and_decide(md_report: str, fixture_id: int) -> Dict[str, Any]:
-    """调用 LLM 对 MD 报告进行整理与下结论，返回指定 JSON。"""
-    logger.info("Summarizing decision via LLM for fixture_id=%s", fixture_id)
-    t0 = time.perf_counter()
-    llm = get_llm()
-    prompt = ChatPromptTemplate.from_messages([
-        (
-            "system",
+    prompt = ChatPromptTemplate.from_messages(
+        [
             (
-                "You are a football betting analyst."
-                " Read the provided Markdown fundamentals report and output ONLY a strict JSON object with keys:"
-                " if_bet (1 or 0), predict_winner (3=home, 1=draw, 0=away), confidence (0-1 float)."
-                " No explanations, no markdown, no additional text."
+                "system",
+                "You are a highly constrained football betting analyst. Your sole task is to analyze the provided Markdown fundamentals report and output the prediction data. STRICTLY adhere to the following rules:"
+                " 1. Output MUST be a single-line, valid JSON object."
+                " 2. DO NOT include any markdown, code fences (```json), explanations, or preamble."
+                " 3. Use the exact following structure (Schema Definition):"
+                "    - 'if_bet': Integer (1 = Yes, 0 = No)"
+                "    - 'predict_winner': Integer (3 = Home Win, 1 = Draw, 0 = Away Win)"
+                "    - 'confidence': Float (ranging from 0.0 to 1.0)"
+                "    - 'key_tag_evidence': String (Core evidence tags, separated by a '/' character, e.g., 'XX队战意强/XX队伤员/XX队防守等')."
+                " Example output format: "
             ),
-        ),
-        (
-            "human",
-            "Fixture {fixture_id} report:\n\n{report}",
-        ),
-    ])
-
-    chain = prompt | llm
-    res = chain.invoke({"fixture_id": fixture_id, "report": md_report})
-    content = res.content if hasattr(res, "content") else str(res)
-
-    try:
-        data = json.loads(content)
-    except Exception:
-        # 简单兜底：尝试提取数字并构造最接近的结果
-        data = {"if_bet": 0, "predict_winner": 1, "confidence": 0.0}
-
-    # 规范化类型
-    if_bet = int(data.get("if_bet", 0))
-    predict_winner = int(data.get("predict_winner", 1))
-    confidence = float(data.get("confidence", 0.0))
-
-    # 边界约束
-    if_bet = 1 if if_bet == 1 else 0
-    predict_winner = 3 if predict_winner == 3 else (1 if predict_winner == 1 else 0)
-    confidence = max(0.0, min(1.0, confidence))
-    dt = time.perf_counter() - t0
-    logger.info(
-        "Decision for fixture_id=%s: if_bet=%s predict_winner=%s confidence=%.3f (%.2fs)",
-        fixture_id,
-        if_bet,
-        predict_winner,
-        confidence,
-        dt,
+            (
+                "human",
+                "Fixture {fixture_id} report:\n\n{report}",
+            ),
+        ]
     )
-    return {
-        "if_bet": if_bet,
-        "predict_winner": predict_winner,
-        "confidence": confidence,
+
+    def _parse_json_line(text: str) -> Dict[str, Any]:
+        stripped = text.strip()
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            start = stripped.find("{")
+            end = stripped.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                return json.loads(stripped[start : end + 1])
+            raise
+
+    llm = get_llm()
+    chain = prompt | llm
+    try:
+        response = chain.invoke({"fixture_id": fixture_id, "report": md_report})
+        content = getattr(response, "content", str(response))
+        raw_decision = _parse_json_line(content)
+    except Exception as e:
+        logger.warning(
+            "Failed to summarize report for fixture_id=%s: %s", fixture_id, e
+        )
+        return {"if_bet": 0, "predict_winner": 1, "confidence": 0.0, "key_tag_evidence": ""}
+
+    decision = {
+        "if_bet": int(raw_decision.get("if_bet", 0)),
+        "predict_winner": int(raw_decision.get("predict_winner", 1)),
+        "confidence": float(raw_decision.get("confidence", 0.0)),
+        "key_tag_evidence": str(raw_decision.get("key_tag_evidence", "")),
     }
+    decision["confidence"] = max(0.0, min(1.0, decision["confidence"]))
+    logger.info(
+        "LLM decision for fixture_id=%s -> if_bet=%s predict_winner=%s confidence=%.3f tags=%s",
+        fixture_id,
+        decision["if_bet"],
+        decision["predict_winner"],
+        decision["confidence"],
+        decision["key_tag_evidence"],
+    )
+    return decision
 
 
 def upsert_ai_eval(conn, fixture_id: int, md_report: str, decision: Dict[str, Any]) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO ai_eval (fixture_id, report_md, if_bet, predict_winner, confidence, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s, NOW() AT TIME ZONE 'UTC', NOW() AT TIME ZONE 'UTC')
-            ON CONFLICT (fixture_id) DO UPDATE SET
-                report_md = EXCLUDED.report_md,
-                if_bet = EXCLUDED.if_bet,
-                predict_winner = EXCLUDED.predict_winner,
-                confidence = EXCLUDED.confidence,
-                updated_at = NOW() AT TIME ZONE 'UTC'
-            ;
-            """,
-            (
-                fixture_id,
-                md_report,
-                int(decision["if_bet"]),
-                int(decision["predict_winner"]),
-                float(decision["confidence"]),
-            ),
-        )
-    conn.commit()
-    logger.info("Upserted ai_eval row for fixture_id=%s", fixture_id)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO ai_eval (fixture_id, report_md, if_bet, predict_winner, confidence, key_tag_evidence, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, NOW() AT TIME ZONE 'UTC', NOW() AT TIME ZONE 'UTC')
+                ON CONFLICT (fixture_id) DO UPDATE SET
+                    report_md = EXCLUDED.report_md,
+                    if_bet = EXCLUDED.if_bet,
+                    predict_winner = EXCLUDED.predict_winner,
+                    confidence = EXCLUDED.confidence,
+                    key_tag_evidence = EXCLUDED.key_tag_evidence,
+                    updated_at = NOW() AT TIME ZONE 'UTC'
+                ;
+                """,
+                (
+                    fixture_id,
+                    md_report,
+                    int(decision["if_bet"]),
+                    int(decision["predict_winner"]),
+                    float(decision["confidence"]),
+                    str(decision.get("key_tag_evidence", "")),
+                ),
+            )
+        conn.commit()
+        logger.info("Upserted ai_eval row for fixture_id=%s", fixture_id)
+    except psycopg2.OperationalError as e:
+        # 尝试回滚以恢复连接状态
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
 
 
 def run_ai_eval() -> List[Dict[str, Any]]:
@@ -262,7 +306,19 @@ def run_ai_eval() -> List[Dict[str, Any]]:
                 else:
                     decision = summarize_and_decide(md, fid)
 
-                upsert_ai_eval(conn, fid, md, decision)
+                # 首次写入尝试
+                try:
+                    upsert_ai_eval(conn, fid, md, decision)
+                except psycopg2.OperationalError:
+                    logger.warning("DB timeout on upsert fixture_id=%s, reconnecting and retrying once", fid)
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    conn = get_db_conn()
+                    ensure_ai_eval_table(conn)
+                    time.sleep(0.5)
+                    upsert_ai_eval(conn, fid, md, decision)
                 results.append({"fixture_id": fid, **decision})
             except Exception as e:
                 logger.exception("Error processing fixture_id=%s: %s", fid, e)
