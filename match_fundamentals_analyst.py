@@ -10,7 +10,7 @@ from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
 load_dotenv()
-from api_football_tools import get_fixture_basic_info, get_standing_home_info, get_standing_away_info, get_fixture_head2head, get_home_last_10, get_away_last_10, get_injuries
+from api_football_tools import get_fixture_basic_info, get_standing_home_info, get_standing_away_info, get_fixture_head2head, get_home_last_10, get_away_last_10, get_injuries, get_fixture_odds
 
 # 模型初始化
 # 注意：langchain-openai 1.0.x 使用参数 `model` 而不是 `model_name`
@@ -54,6 +54,7 @@ def create_fundamentals_analyst(llm):
             get_fixture_basic_info,
             get_standing_home_info,
             get_standing_away_info,
+            get_fixture_odds,
         ]
 
         system_message = (
@@ -67,6 +68,7 @@ def create_fundamentals_analyst(llm):
             + "get_fixture_basic_info: 获取比赛基本信息."
             + "get_standing_home_info: 获取主队积分榜信息."
             + "get_standing_away_info: 获取客队积分榜信息."
+            + "get_fixture_odds: 获取比赛赔率信息."
         )
 
         prompt = ChatPromptTemplate.from_messages([
