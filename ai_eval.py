@@ -182,7 +182,7 @@ def generate_markdown_report(fixture_id: int) -> str:
 
 def get_llm() -> ChatOpenAI:
     return ChatOpenAI(
-        model=os.getenv("YUNWU_MODEL") or "gpt-4o",
+        model=os.getenv("YUNWU_MODEL") or "gpt-5",
         api_key=os.getenv("YUNWU_API_KEY"),
         base_url=_ensure_v1_base_url(os.getenv("YUNWU_API_BASE_URL")),
     )
