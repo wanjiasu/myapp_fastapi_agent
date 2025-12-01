@@ -8,7 +8,7 @@ from contextlib import suppress
 
 # 直接复用现有的分析图逻辑
 from match_fundamentals_analyst import graph
-from ai_eval import run_ai_eval
+from ai_eval_yesterday import run_ai_eval
 
 app = FastAPI(title="Fundamentals Analyst API", version="0.1.0")
 
@@ -68,19 +68,13 @@ async def get_fundamentals(
         raise HTTPException(status_code=500, detail=f"生成报告失败：{type(e).__name__}: {e}")
 
 
-def _seconds_until_next_utc_hour(target_hour: int = 1) -> float:
-    """计算从现在到下一个 UTC 日期的指定小时的秒数（默认 01:00）。"""
-    now = datetime.now(timezone.utc)
-    target = now.replace(hour=target_hour, minute=0, second=0, microsecond=0)
-    if now >= target:
-        target = target + timedelta(days=1)
-    return (target - now).total_seconds()
+
 
 
 async def _ai_eval_scheduler():
-    """每日 UTC 01:00 运行 ai_eval.run_ai_eval 的调度协程。"""
+    """每小时运行一次 ai_eval 的调度协程。"""
     while True:
-        delay = _seconds_until_next_utc_hour(1)
+        delay = 3600  # 1小时 = 3600秒
         next_run = datetime.now(timezone.utc) + timedelta(seconds=delay)
         logger.info(
             "AI Eval scheduled for %s (UTC), sleeping %.0f seconds",

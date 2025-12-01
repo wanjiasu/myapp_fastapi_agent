@@ -125,10 +125,10 @@ def fetch_recent_fixture_ids(conn) -> List[int]:
         logger.warning("No league ids parsed from LEAGUE_IDS env; skipping fetch")
         return []
 
-    # 计算 UTC 昨天和今天的时间范围
+    # 计算 UTC 今天和明天的时间范围
     now_utc = datetime.now(timezone.utc)
-    yesterday_date = (now_utc - timedelta(days=1)).date()
-    start_utc = datetime(yesterday_date.year, yesterday_date.month, yesterday_date.day, 0, 0, 0, tzinfo=timezone.utc)
+    today_date = now_utc.date()
+    start_utc = datetime(today_date.year, today_date.month, today_date.day, 0, 0, 0, tzinfo=timezone.utc)
     end_utc = start_utc + timedelta(days=2)
 
     logger.info(
@@ -150,10 +150,28 @@ def fetch_recent_fixture_ids(conn) -> List[int]:
             """,
             (leagues, start_utc, end_utc),
         )
-        rows = cur.fetchall()
-    fixture_ids = [r[0] for r in rows]
-    logger.info("Found %d fixtures for yesterday and today", len(fixture_ids))
-    return fixture_ids
+        all_fixture_ids = [r[0] for r in cur.fetchall()]
+        if not all_fixture_ids:
+            logger.info("No fixtures found in the given time range.")
+            return []
+
+        # 查询 ai_eval 表中已经存在的 fixture_id
+        cur.execute(
+            """
+            SELECT fixture_id
+            FROM ai_eval
+            WHERE fixture_id = ANY(%s)
+            """,
+            (all_fixture_ids,),
+        )
+        existing_fixture_ids = {r[0] for r in cur.fetchall()}
+        logger.info("Found %d existing fixtures in ai_eval table.", len(existing_fixture_ids))
+
+    # 过滤掉已经存在的 fixture_id
+    fixture_ids_to_process = [fid for fid in all_fixture_ids if fid not in existing_fixture_ids]
+
+    logger.info("Found %d fixtures for today and tomorrow", len(fixture_ids_to_process))
+    return fixture_ids_to_process
 
 
 def generate_markdown_report(fixture_id: int) -> str:
