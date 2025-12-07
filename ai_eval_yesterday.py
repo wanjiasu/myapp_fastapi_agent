@@ -10,6 +10,8 @@ import time
 
 from dotenv import load_dotenv
 import psycopg2
+
+load_dotenv()
 from psycopg2.extras import RealDictCursor
 
 from langchain_openai import ChatOpenAI
@@ -50,11 +52,11 @@ def get_db_conn():
         os.getenv("postgre_user"),
     )
     conn = psycopg2.connect(
-        host=os.getenv("postgre_host"),
-        port=int(os.getenv("postgre_port", "5432")),
-        dbname=os.getenv("postgre_db"),
-        user=os.getenv("postgre_user"),
-        password=os.getenv("postgre_password"),
+        host=os.getenv("POSTGRES_HOST"),
+        port=int(os.getenv("POSTGRES_PORT", "5432")),
+        dbname=os.getenv("POSTGRES_DB"),
+        user=os.getenv("POSTGRES_USER"),
+        password=os.getenv("POSTGRES_PASSWORD"),
         connect_timeout=int(os.getenv("POSTGRE_CONNECT_TIMEOUT", "10")),
         application_name="ai_eval",
         keepalives=1,
