@@ -180,7 +180,7 @@ def generate_markdown_report(fixture_id: int) -> str:
     logger.info("Generating fundamentals report for fixture_id=%s", fixture_id)
     t0 = time.perf_counter()
     initial_state = {
-        "messages": [HumanMessage(content=f"分析比赛id为 {fixture_id} 的基本面数据")],
+        "messages": [HumanMessage(content=f"Analyze the fundamentals data for fixture with id {fixture_id}")],
         "fixture_id": fixture_id,
         "sender": "user",
         "fundamentals_report": "",
@@ -220,7 +220,7 @@ def summarize_and_decide(md_report: str, fixture_id: int) -> Dict[str, Any]:
                 "    - 'if_bet': Integer (1 = Yes, 0 = No)"
                 "    - 'predict_winner': Integer (3 = Home Win, 1 = Draw, 0 = Away Win)"
                 "    - 'confidence': Float (ranging from 0.0 to 1.0)"
-                "    - 'key_tag_evidence': String (Core evidence tags, separated by a '/' character, e.g., 'XX队战意强/XX队伤员/XX队防守等')."
+                "    - 'key_tag_evidence': String (Core evidence tags, separated by a '/' character, e.g., 'Team A has strong motivation/Team B has injured players/Team A has poor defense')."
                 " Example output format: "
             ),
             (
